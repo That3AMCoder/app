@@ -51,8 +51,8 @@ export abstract class BaseMediaService implements MediaService {
     return this.audioCtx.createIIRFilter(feedforward, feedback);
   };
 
-  createOscillator = (): OscillatorNode => {
-    return this.audioCtx.createOscillator();
+  createOscillator = (options?: OscillatorOptions): OscillatorNode => {
+    return new OscillatorNode(this.audioCtx, options);
   };
 
   createPanner = (): PannerNode => {
@@ -97,7 +97,7 @@ export abstract class BaseMediaService implements MediaService {
 
   abstract playAudioInput(): Promise<void>;
 
-  abstract playAudioNode(node: AudioNode): Promise<void>;
+  abstract playAudioNode(node: AudioScheduledSourceNode | AudioNode): Promise<void>;
 
   abstract playBlob(blob: Blob): Promise<void>;
 
@@ -105,7 +105,7 @@ export abstract class BaseMediaService implements MediaService {
 
   abstract resumePlaying(): Promise<void>;
 
-  abstract setSource(source: AudioNode): void;
+  abstract setSource(source: AudioScheduledSourceNode | AudioNode): void;
 
   abstract setVolume(volume: number): void;
 

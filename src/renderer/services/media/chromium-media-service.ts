@@ -19,7 +19,7 @@ import { MediaServiceState } from './types';
 export class ChromiumMediaService extends BaseMediaService implements Closeable {
   private readonly gainNode: GainNode = this.audioCtx.createGain();
   private readonly destinationNode: MediaStreamAudioDestinationNode = this.audioCtx.createMediaStreamDestination();
-  private currentSource?: AudioNode;
+  private currentSource?: AudioScheduledSourceNode | AudioNode;
   private audioInputStream?: MediaStream;
   private recorder?: MediaRecorder;
 
@@ -105,30 +105,47 @@ export class ChromiumMediaService extends BaseMediaService implements Closeable 
     this.currentSource = undefined;
   };
 
-  setSource = (source: AudioNode): void => {
+  setSource = (source: AudioScheduledSourceNode | AudioNode): void => {
     this.removeCurrentSource();
     source.connect(this.gainNode);
     this.currentSource = source;
   };
 
   currentState = (): MediaServiceState => {
-    return this.audioCtx.state;
+    if (this.audioCtx.state === 'closed') {
+      return 'closed';
+    } else if (!this.currentSource) {
+      return 'suspended';
+    } else {
+      return 'running';
+    }
   };
 
   resumePlaying = async (): Promise<void> => {
-    if (this.currentState() === 'suspended') {
-      return this.audioCtx.resume();
-    }
+    this.audioElement.muted = false;
+    // FIXME Not sure if this works well
+    // if (this.currentState() === 'suspended') {
+    //   return this.audioCtx.resume();
+    // }
   };
 
   suspendPlaying = async (): Promise<void> => {
-    if (this.currentState() === 'running') {
-      return this.audioCtx.suspend();
-    }
+    this.audioElement.muted = true;
+    // FIXME Not sure if this works well
+    // if (this.currentState() === 'running') {
+    //   return this.audioCtx.suspend();
+    // }
   };
 
   stopPlaying = async (): Promise<void> => {
     if (this.currentState() === 'running') {
+      if (this.currentSource && 'stop' in this.currentSource) {
+        this.currentSource.stop();
+        if (this.currentSource.onended) {
+          // Because this is set by startPlaying();
+          (this.currentSource.onended as () => void)();
+        }
+      }
       await this.suspendPlaying();
       this.removeCurrentSource();
     }
@@ -173,15 +190,34 @@ export class ChromiumMediaService extends BaseMediaService implements Closeable 
     });
   };
 
-  playAudioNode = async (node: AudioNode): Promise<void> => {
-    this.setSource(node);
-    return this.resumePlaying();
+  playAudioNode = async (node: AudioScheduledSourceNode | AudioNode): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      try {
+        this.setSource(node);
+        const resumePlayingPromise = this.resumePlaying();
+        if ('start' in node) {
+          node.start();
+          node.onended = (): void => {
+            node.onended = null;
+            resolve();
+          };
+          resumePlayingPromise.catch(reject);
+        } else {
+          resumePlayingPromise.then(resolve).catch(reject);
+        }
+      } catch (e) {
+        reject(e);
+      }
+    });
   };
 
   playBlob = async (blob: Blob): Promise<void> => {
-    const sourceElement = new Audio();
-    sourceElement.srcObject = blob;
-    return this.playAudioNode(this.audioCtx.createMediaElementSource(sourceElement));
+    const buffer = await this.audioBlobToWavArrayBuffer(blob);
+    const audioBuffer = await this.audioCtx.decodeAudioData(buffer);
+    const bufferSource = this.audioCtx.createBufferSource();
+    bufferSource.buffer = audioBuffer;
+
+    return this.playAudioNode(bufferSource);
   };
 
   playAudioInput = async (): Promise<void> => {
